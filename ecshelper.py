@@ -1,19 +1,45 @@
-import json, csv, pprint
+import argparse, json, csv
+from pprint import pprint
 from collections import OrderedDict
 from prompt_toolkit import prompt
 from prompt_toolkit.completion import WordCompleter
 from elasticsearch import Elasticsearch
 from elasticsearch.client import IndicesClient
+from config import esconfig
 
 rows = []
+
+def get_credentials():
+    user = input('Username: ')
+    if user:
+        pwd = getpass.getpass()
+        return (user, pwd)
+    else:
+        return(None,None)
+
+def get_clients(user=None,pwd=None):
+    host = esconfig[0]['host']
+    port = esconfig[0]['port']
+    if user:
+        es = Elasticsearch([host], http_auth=(user,pwd), port=port)
+    else:
+        es = Elasticsearch(esconfig)
+    ic = IndicesClient(es)
+    return es,ic
+
+def export_mapping(ic,index_name):
+    mapping = ic.get_mapping(index=args.index)
+    with open(f'{index_name}_mapping.json', 'w') as mf:
+        json.dump(mapping[index_name], mf)
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('index', help='name of the index')
+    args = parser.parse_args()
+    return args
 
 def flatten_json(y):
     out = {}
-
     def flatten(x, name=''):
         if type(x) is dict:
             for a in x:
@@ -25,7 +51,6 @@ def flatten_json(y):
                 i += 1
         else:
             out[name[:-1]] = x
-
     flatten(y)
     return out
 
@@ -35,10 +60,9 @@ def get_mapping(file):
         return mapping
 
 def unpack(mapping):
-    index = list(mapping.keys())[0]
-    doc_type = list(mapping[index]['mappings'].keys())[0]
-    fields_dict = mapping[index]['mappings'][doc_type]['properties']
-    return fields_dict, index
+    doc_type = list(mapping['mappings'].keys())[0]
+    fields_dict = mapping['mappings'][doc_type]['properties']
+    return fields_dict
 
 def get_schema(fields_dict):
     schema = {}
@@ -67,16 +91,6 @@ def dict_generator(indict, pre=None):
     else:
         yield indict
 
-
-'''
-with open(f'{index}_schema.csv', 'w') as csvfile:
-    fieldnames = ['field', 'type']
-    writer = csv.writer(csvfile)
-    writer.writerow(fieldnames)
-    for k, v in flat_schema.items():
-        writer.writerow((k,v))
-'''
-
 def get_ecs_fields():
     with open('ecs_fields.csv', 'r') as ff:
         ff_csv = csv.reader(ff)
@@ -91,10 +105,34 @@ def get_field_map(ecs_fields, fields):
         field_map[field] = prompt(field + ' > ', completer = ecs_completer)
     return field_map
 
-mapping = get_mapping('bro_mapping.json')
-fields_dict, index = unpack(mapping)
+def export_ecsmap(ecsmap):
+    with open(f'{index}_ecsmap.json', 'w') as emf:
+        json.dump(ecsmap, emf)
+
+def generate_ecs_mappings(ecsmap):
+    with open(f'{args.index}_mapping.json', 'r') as omf:
+        omd = json.load(omf)
+
+def findnreplace(rmap, mapping):
+    mapping_json = json.dumps(mapping)
+    for k, v in rmap.items():
+        mapping_json = mapping_json.replace(k,v)
+    return json.loads(mapping_json)
+
+
+args = parse_args()
+user, pwd = get_credentials()
+es, ic = get_clients(user,pwd)
+export_mapping(ic,args.index)
+mapping = get_mapping(f'{args.index}_mapping.json')
+fields_dict = unpack(mapping)
 schema = get_schema(fields_dict)
 flat_schema = flatten_json(schema)
 ecs_fields = get_ecs_fields()
-field_map = get_field_map(ecs_fields, flat_schema.keys())
-print(field_map)
+ecsmap = get_field_map(ecs_fields, flat_schema.keys())
+#export_ecsmap(ecsmap)
+#pprint(ecsmap)
+new_mapping = findnreplace(ecsmap, mapping)
+#print(new_mapping)
+resp = ic.create(index=f'{args.index}_ecs', body=new_mapping)
+print(resp)

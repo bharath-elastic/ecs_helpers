@@ -3,7 +3,7 @@ from pprint import pprint
 from collections import OrderedDict
 from prompt_toolkit import prompt
 from prompt_toolkit.completion import WordCompleter
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, RequestError
 from elasticsearch.client import IndicesClient
 from config import esconfig
 
@@ -119,6 +119,13 @@ def findnreplace(rmap, mapping):
         mapping_json = mapping_json.replace(k,v)
     return json.loads(mapping_json)
 
+def create_ecsindex(ic, new_mapping):
+    try:
+        resp = ic.create(index=f'{args.index}_ecs', body=new_mapping)
+    except RequestError as e:
+        print('target index already exists')
+        print(e)
+
 
 args = parse_args()
 user, pwd = get_credentials()
@@ -134,5 +141,5 @@ ecsmap = get_field_map(ecs_fields, flat_schema.keys())
 #pprint(ecsmap)
 new_mapping = findnreplace(ecsmap, mapping)
 #print(new_mapping)
-resp = ic.create(index=f'{args.index}_ecs', body=new_mapping)
-print(resp)
+#resp = ic.create(index=f'{args.index}_ecs', body=new_mapping)
+create_ecsindex(ic, new_mapping)

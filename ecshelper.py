@@ -1,4 +1,7 @@
-import argparse, json, csv
+import argparse
+import json
+import csv
+import requests
 from pprint import pprint
 from collections import OrderedDict
 from prompt_toolkit import prompt
@@ -6,8 +9,15 @@ from prompt_toolkit.completion import WordCompleter
 from elasticsearch import Elasticsearch, RequestError
 from elasticsearch.client import IndicesClient
 from config import esconfig
+from config import ecs_csv_url
 
 rows = []
+
+
+def update_ecs(ecs_csv_url):
+    r = requests.get(ecs_csv_url, allow_redirects=True)
+    with open('ecs_fields.csv', 'wb') as f:
+        f.write(r.content)
 
 def get_credentials():
     user = input('Username: ')
@@ -60,8 +70,7 @@ def get_mapping(file):
         return mapping
 
 def unpack(mapping):
-    doc_type = list(mapping['mappings'].keys())[0]
-    fields_dict = mapping['mappings'][doc_type]['properties']
+    fields_dict = mapping['mappings']['properties']
     return fields_dict
 
 def get_schema(fields_dict):
@@ -95,14 +104,25 @@ def get_ecs_fields():
     with open('ecs_fields.csv', 'r') as ff:
         ff_csv = csv.reader(ff)
         header = next(ff_csv)
-        fields = [column[0] for column in ff_csv]
+        fields = [column[3] for column in ff_csv]
         return fields
 
 def get_field_map(ecs_fields, fields):
     field_map = {}
     ecs_completer = WordCompleter(ecs_fields, sentence=True)
     for field in fields:
-        field_map[field] = prompt(field + ' > ', completer = ecs_completer)
+        try:
+            new_field = prompt(field + ' > ', completer = ecs_completer)
+            if new_field and new_field != field:
+                field_map[field] = new_field
+            else:
+                continue
+        except KeyboardInterrupt:
+            continue
+        except EOFError:
+            break
+    with open(f'{args.index}_fieldmap.json', 'w') as fm:
+        json.dump(field_map, fm)
     return field_map
 
 def export_ecsmap(ecsmap):
@@ -121,13 +141,14 @@ def findnreplace(rmap, mapping):
 
 def create_ecsindex(ic, new_mapping):
     try:
-        resp = ic.create(index=f'{args.index}_ecs', body=new_mapping)
+        resp = ic.create(index=f'{args.index}_ecs', body=#new_mapping)
     except RequestError as e:
         print('target index already exists')
         print(e)
 
 
 args = parse_args()
+update_ecs(ecs_csv_url)
 user, pwd = get_credentials()
 es, ic = get_clients(user,pwd)
 export_mapping(ic,args.index)
@@ -137,9 +158,7 @@ schema = get_schema(fields_dict)
 flat_schema = flatten_json(schema)
 ecs_fields = get_ecs_fields()
 ecsmap = get_field_map(ecs_fields, flat_schema.keys())
-#export_ecsmap(ecsmap)
-#pprint(ecsmap)
-new_mapping = findnreplace(ecsmap, mapping)
+#new_mapping = findnreplace(ecsmap, mapping)
 #print(new_mapping)
 #resp = ic.create(index=f'{args.index}_ecs', body=new_mapping)
-create_ecsindex(ic, new_mapping)
+#create_ecsindex(ic, new_mapping)
